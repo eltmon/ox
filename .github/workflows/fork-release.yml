@@ -1,0 +1,70 @@
+name: Fork Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    if: github.repository == 'eltmon/ox'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Get version info
+        id: version
+        run: |
+          VERSION=$(grep 'Version = ' internal/version/version.go | sed 's/.*"\(.*\)".*/\1/')
+          COMMIT=$(git rev-parse --short HEAD)
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        run: |
+          LDFLAGS="-s -w -X github.com/sageox/ox/internal/version.Version=${{ steps.version.outputs.version }} -X github.com/sageox/ox/internal/version.GitCommit=${{ steps.version.outputs.commit }} -X github.com/sageox/ox/internal/version.BuildDate=${{ steps.version.outputs.date }}"
+
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o ox-linux-amd64 ./cmd/ox/
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o ox-darwin-amd64 ./cmd/ox/
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o ox-darwin-arm64 ./cmd/ox/
+
+      - name: Create or update release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Build
+          body: |
+            Pre-built ox binaries from eltmon/ox fork.
+
+            Version: ${{ steps.version.outputs.version }}
+            Commit: ${{ steps.version.outputs.commit }}
+            Built: ${{ steps.version.outputs.date }}
+
+            Download the binary for your platform and place it in your PATH:
+            ```bash
+            # Linux (x86_64)
+            curl -sL https://github.com/eltmon/ox/releases/latest/download/ox-linux-amd64 -o ~/.local/bin/ox && chmod +x ~/.local/bin/ox
+
+            # macOS (Intel)
+            curl -sL https://github.com/eltmon/ox/releases/latest/download/ox-darwin-amd64 -o /usr/local/bin/ox && chmod +x /usr/local/bin/ox
+
+            # macOS (Apple Silicon)
+            curl -sL https://github.com/eltmon/ox/releases/latest/download/ox-darwin-arm64 -o /usr/local/bin/ox && chmod +x /usr/local/bin/ox
+            ```
+          files: |
+            ox-linux-amd64
+            ox-darwin-amd64
+            ox-darwin-arm64
+          prerelease: true
+          make_latest: true
