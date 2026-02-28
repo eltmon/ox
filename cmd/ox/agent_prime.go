@@ -303,6 +303,20 @@ func initAgentPrimeCmd() {
 	// When true and marker exists: outputs nothing, exits 0 (saves ~1k tokens).
 	// When false (default): always outputs context (safe, may waste tokens on duplicate calls).
 	agentPrimeCmd.Flags().Bool("idempotent", false, "Skip priming if session already primed (token optimization)")
+
+	// Project root override for devroot workflows.
+	// Precedence: --project > OX_PROJECT_ROOT env var > walk-up discovery (existing)
+	agentPrimeCmd.Flags().String("project", "", "Explicit project root path (overrides discovery)")
+
+	// Auto-record mode: combines context injection with session recording start.
+	// Essential for automated workflows where there's no human to run /ox-session-start.
+	agentPrimeCmd.Flags().Bool("auto-record", false, "Automatically start session recording after prime")
+
+	// External issue tracking for multi-agent pipelines.
+	// Enables grouping sessions by issue ID (e.g., PAN-279) on sageox.ai dashboard.
+	agentPrimeCmd.Flags().String("issue", "", "External issue ID for grouping (e.g., PAN-279)")
+	agentPrimeCmd.Flags().String("title", "", "Session title (used when auto-record is enabled)")
+	agentPrimeCmd.Flags().String("parent-session", "", "Parent session path (for subagent linking in multi-agent pipelines)")
 }
 
 // runAgentPrime bootstraps a new agent instance with team context.
@@ -337,6 +351,11 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	model, _ := cmd.Flags().GetString("model")
 	agentVer, _ := cmd.Flags().GetString("agent-ver")
 	idempotent, _ := cmd.Flags().GetBool("idempotent")
+	projectFlag, _ := cmd.Flags().GetString("project")
+	autoRecord, _ := cmd.Flags().GetBool("auto-record")
+	issueID, _ := cmd.Flags().GetString("issue")
+	sessionTitle, _ := cmd.Flags().GetString("title")
+	parentSession, _ := cmd.Flags().GetString("parent-session")
 
 	// read Claude hook input from stdin (session_id for marker keying)
 	// this is non-blocking and returns nil if not in hook context
@@ -388,9 +407,16 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	// load attribution from user and project configs
 	attribution := loadResolvedAttribution()
 
-	projectRoot, err := findProjectRoot()
-	if err != nil {
-		return fmt.Errorf("could not find project root: %w", err)
+	// Determine project root: --project flag > OX_PROJECT_ROOT env var > walk-up discovery
+	var projectRoot string
+	if projectFlag != "" {
+		projectRoot = resolvePath(projectFlag)
+	} else {
+		var err error
+		projectRoot, err = findProjectRoot()
+		if err != nil {
+			return fmt.Errorf("could not find project root: %w", err)
+		}
 	}
 
 	// check if project is initialized (.sageox/ exists)
@@ -456,8 +482,8 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// attempt to start session recording if enabled
-	sessionStat := startSessionRecording(projectRoot, agentID, agentType)
+	// attempt to start session recording if enabled or --auto-record is set
+	sessionStat := startSessionRecording(projectRoot, agentID, agentType, autoRecord, issueID, sessionTitle, parentSession)
 
 	// discover team context if configured
 	teamCtx := discoverTeamContext(projectRoot)
@@ -857,14 +883,26 @@ func buildGuidance(teamCtx *teamContextInfo, ledger *ledgerInfo) *agentGuidance 
 // startSessionRecording attempts to start session recording if enabled.
 // Returns the session status for inclusion in prime output.
 // Errors are logged but not fatal - session recording is optional.
-func startSessionRecording(projectRoot, agentID, agentType string) *sessionStatus {
+//
+// Parameters:
+//   - projectRoot: path to the project root
+//   - agentID: unique identifier for this agent instance
+//   - agentType: type of agent (e.g., claude-code)
+//   - autoRecord: force recording start regardless of config (for --auto-record flag)
+//   - issueID: external issue ID for grouping sessions (e.g., PAN-279)
+//   - sessionTitle: optional title for the session
+//   - parentSession: path to parent session for subagent linking
+func startSessionRecording(projectRoot, agentID, agentType string, autoRecord bool, issueID, sessionTitle, parentSession string) *sessionStatus {
 	// resolve session mode from config hierarchy
 	resolved := config.ResolveSessionRecording(projectRoot)
 
-	// only auto-start recording when config is explicitly set to "auto"
+	// auto-start recording when:
+	// 1. --auto-record flag is explicitly set, OR
+	// 2. config is explicitly set to "auto"
 	// "manual" mode requires the user to run `ox session start` themselves
-	// "disabled" mode means no recording at all
-	if !resolved.IsAuto() {
+	// "disabled" mode means no recording at all (unless --auto-record override)
+	shouldAutoStart := autoRecord || resolved.IsAuto()
+	if !shouldAutoStart {
 		return nil
 	}
 
@@ -910,11 +948,14 @@ func startSessionRecording(projectRoot, agentID, agentType string) *sessionStatu
 
 	// start recording with filter mode
 	opts := session.StartRecordingOptions{
-		AgentID:     agentID,
-		AdapterName: agentType,
-		SessionFile: sessionFile,
-		OutputFile:  outputFile,
-		FilterMode:  resolved.Mode,
+		AgentID:           agentID,
+		AdapterName:       agentType,
+		SessionFile:       sessionFile,
+		OutputFile:        outputFile,
+		FilterMode:        resolved.Mode,
+		Title:             sessionTitle,
+		ExternalIssueID:   issueID,
+		ParentSessionPath: parentSession,
 	}
 
 	state, err := session.StartRecording(projectRoot, opts)

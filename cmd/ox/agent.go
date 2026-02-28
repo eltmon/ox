@@ -256,6 +256,15 @@ func resolveInstance(agentID string) (*agentinstance.Instance, error) {
 
 // findProjectRoot walks up from cwd looking for .sageox directory
 func findProjectRoot() (string, error) {
+	// Check for explicit project root override via environment variable
+	if override := os.Getenv("OX_PROJECT_ROOT"); override != "" {
+		resolved := resolvePath(override)
+		sageoxDir := filepath.Join(resolved, ".sageox")
+		if info, err := os.Stat(sageoxDir); err == nil && info.IsDir() {
+			return resolved, nil
+		}
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return "", err
@@ -275,6 +284,17 @@ func findProjectRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// resolvePath expands environment variables and converts to absolute path
+func resolvePath(path string) string {
+	// Expand environment variables
+	path = os.ExpandEnv(path)
+	// Convert to absolute path
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // getUserSlug returns the current git user's slug for per-user session isolation

@@ -43,6 +43,9 @@ type RecordingState struct {
 	// back to the parent session for aggregation.
 	ParentSessionPath string `json:"parent_session_path,omitempty"` // path to parent's session folder
 	ParentAgentID     string `json:"parent_agent_id,omitempty"`     // parent's agent ID (e.g., "Oxa7b3")
+
+	// ExternalIssueID links this session to an external issue tracker (e.g., PAN-279)
+	ExternalIssueID string `json:"external_issue_id,omitempty"`
 }
 
 // Duration returns how long the recording has been running.
@@ -203,6 +206,9 @@ type StartRecordingOptions struct {
 	// Parent session tracking for subagent workflows
 	ParentSessionPath string // path to parent's session folder (optional)
 	ParentAgentID     string // parent's agent ID (optional)
+
+	// ExternalIssueID links this session to an external issue tracker (e.g., PAN-279)
+	ExternalIssueID string // external issue ID for grouping (optional)
 }
 
 // StartRecording begins a new recording session.
@@ -292,6 +298,7 @@ func StartRecording(projectRoot string, opts StartRecordingOptions) (*RecordingS
 		FilterMode:        opts.FilterMode,
 		ParentSessionPath: opts.ParentSessionPath,
 		ParentAgentID:     opts.ParentAgentID,
+		ExternalIssueID:   opts.ExternalIssueID,
 	}
 
 	if err := SaveRecordingState(projectRoot, state); err != nil {

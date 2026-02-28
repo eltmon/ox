@@ -315,7 +315,19 @@ func FindProjectConfigPath() (string, error) {
 // FindProjectRoot walks up from the current working directory looking for .sageox directory.
 // Returns the project root if found, empty string if not found.
 // This is useful for finding the project root without requiring a config file to exist.
+//
+// Environment variable OX_PROJECT_ROOT can be used to override the project root
+// discovery. This is useful for devroot workflows where the current working directory
+// is a parent of multiple project directories.
 func FindProjectRoot() string {
+	// Check for explicit project root override via environment variable
+	if override := os.Getenv("OX_PROJECT_ROOT"); override != "" {
+		resolved := resolvePath(override)
+		if IsInitialized(resolved) {
+			return resolved
+		}
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return ""
@@ -336,6 +348,17 @@ func FindProjectRoot() string {
 		}
 		currentDir = parentDir
 	}
+}
+
+// resolvePath expands environment variables and converts to absolute path
+func resolvePath(path string) string {
+	// Expand environment variables
+	path = os.ExpandEnv(path)
+	// Convert to absolute path
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // findProjectConfigPathFromDir walks up from the given directory looking for .sageox/config.json
