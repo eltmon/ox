@@ -134,6 +134,8 @@ func NewClient(sessionID string, opts ...ClientOption) *Client {
 // saved telemetry setting.
 func Enabled() bool {
 	switch {
+	case config.HostOffline():
+		return false
 	case os.Getenv("DO_NOT_TRACK") == "1":
 		return false
 	case strings.EqualFold(os.Getenv("SAGEOX_TELEMETRY"), "false"):

@@ -76,6 +76,7 @@ const (
 	SessionRecordingSourceUser    SessionRecordingSource = "user"    // from user config
 	SessionRecordingSourceTeam    SessionRecordingSource = "team"    // from team defaults (future)
 	SessionRecordingSourceRepo    SessionRecordingSource = "repo"    // from .sageox/config.json
+	SessionRecordingSourceHost    SessionRecordingSource = "host"    // host-managed mode with the network off
 )
 
 // ResolvedSessionRecording contains the effective mode and its source.
@@ -249,6 +250,12 @@ type ResolvedSessionPublishing struct {
 // hand-editing the user config file was inert because this resolver only
 // ever consulted project config.
 func ResolveSessionPublishing(projectRoot string) *ResolvedSessionPublishing {
+	// Host-managed mode with the network off: sessions stay on this machine,
+	// whatever the env or config says.
+	if HostOffline() {
+		return &ResolvedSessionPublishing{Mode: SessionPublishingManual, Source: SessionRecordingSourceHost}
+	}
+
 	// OX_SESSION_PUBLISHING env var — highest priority (pipelines / automation).
 	//
 	// An UNRECOGNIZED value is ignored rather than normalized. Normalizing it
