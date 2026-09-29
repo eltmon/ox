@@ -364,7 +364,8 @@ func (d *Daemon) RestartRequested() bool {
 // Off under disposable_machine: the machine runs one job, and the checks
 // rewrite files in every Ledger under the home, not only this job's.
 func (d *Daemon) startAutofix() {
-	if d.config.ProjectRoot == "" || d.config.DisposableMachine {
+	// Host-managed mode (OX_HOST_MANAGED) never repairs repository files.
+	if d.config.ProjectRoot == "" || d.config.DisposableMachine || config.HostManaged() {
 		return
 	}
 	autofixReg := autofix.Default()

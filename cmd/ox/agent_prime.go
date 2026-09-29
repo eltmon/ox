@@ -288,11 +288,19 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	agentType = canonicalAgentType(agentType)
 	isCursor := agentType == string(agentx.AgentTypeCursor)
 
+	// host-managed mode: the host decides where SageOx runs, so an
+	// uninitialized repo is a silent no-op — never an instruction to the agent
+	// to ask the user to run ox init.
+	hostManaged := config.HostManaged()
+
 	var projectRoot string
 	var err error
 	if isCursor {
 		projectRoot, err = findProjectRoot()
 		if err != nil {
+			if hostManaged {
+				return nil
+			}
 			return fmt.Errorf("could not find project root: %w", err)
 		}
 	}
@@ -375,6 +383,9 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	if projectRoot == "" {
 		projectRoot, err = findProjectRoot()
 		if err != nil {
+			if hostManaged {
+				return nil
+			}
 			return fmt.Errorf("could not find project root: %w", err)
 		}
 	}
@@ -413,6 +424,9 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	// check if project is initialized (.sageox/ exists)
 	sageoxDir := filepath.Join(projectRoot, ".sageox")
 	if _, err := os.Stat(sageoxDir); os.IsNotExist(err) {
+		if hostManaged {
+			return nil
+		}
 		// project not initialized - tell the agent to ask user to run ox init
 		output := agentPrimeOutput{
 			Status:  "unavailable",
@@ -422,13 +436,17 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	}
 
 	// anti-entropy: ensure ox:prime marker exists in AGENTS.md/CLAUDE.md
-	// only run on properly initialized projects (config.json exists, not just .sageox/ dir)
-	if config.IsInitialized(projectRoot) {
-		_, _ = EnsureOxPrimeMarker(projectRoot)
-	}
+	// only run on properly initialized projects (config.json exists, not just .sageox/ dir).
+	// Host-managed mode writes nothing into the repo: the host supplies hooks.
+	hooksInstalled := false
+	if !hostManaged {
+		if config.IsInitialized(projectRoot) {
+			_, _ = EnsureOxPrimeMarker(projectRoot)
+		}
 
-	// anti-entropy: ensure Claude Code hooks are installed
-	hooksInstalled := ensureClaudeHooks(projectRoot)
+		// anti-entropy: ensure Claude Code hooks are installed
+		hooksInstalled = ensureClaudeHooks(projectRoot)
+	}
 
 	// anti-entropy: retry plan commits/pushes a review session could not land
 	// (detached; a no-op ReadDir when nothing is pending — plan_push_pending.go)
@@ -584,6 +602,12 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 			case authErr != nil:
 				msg = fmt.Sprintf("Authentication expired. Run 'ox login' to authenticate with %s.", endpointSlug)
 			}
+			msg += " Session recording is active locally — data will be uploaded after authentication."
+			if hostManaged {
+				// login is the operator's business, never the agent's: no
+				// login instruction reaches the agent's context.
+				msg = "Session recording is active locally."
+			}
 			output := agentPrimeOutput{
 				Status:             "degraded",
 				AgentID:            agentID,
@@ -591,7 +615,7 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 				CurrentUserName:    currentUserName,
 				CurrentUserAliases: currentUserAliases,
 				CurrentUserKind:    currentUserKind,
-				Message:            msg + " Session recording is active locally — data will be uploaded after authentication.",
+				Message:            msg,
 			}
 			if sessionStat != nil && sessionStat.UserNotification != "" {
 				output.UserNotification = sessionStat.UserNotification
@@ -653,14 +677,18 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	// Bring the managed skill inventory in line with this binary before the agent
 	// reads it. The healthy path is a lockfile read and two comparisons; a plan is
 	// only built once a mismatch is proven. Failures never reach the session.
+	// Host-managed mode leaves the repo's skill inventory alone.
 	skillReconcileStart := time.Now()
-	reconciled, withheldDecisions := reconcileSkillInventoryIfStale(projectRoot)
-	if reconciled > 0 {
-		timing["skills_reconciled"] = int64(reconciled)
-	}
-	withheldTeamSkills := make([]prime.WithheldSkill, 0, len(withheldDecisions))
-	for _, d := range withheldDecisions {
-		withheldTeamSkills = append(withheldTeamSkills, prime.WithheldSkill{Name: d.Name, Reason: d.Reason})
+	var withheldTeamSkills []prime.WithheldSkill
+	if !hostManaged {
+		reconciled, withheldDecisions := reconcileSkillInventoryIfStale(projectRoot)
+		if reconciled > 0 {
+			timing["skills_reconciled"] = int64(reconciled)
+		}
+		withheldTeamSkills = make([]prime.WithheldSkill, 0, len(withheldDecisions))
+		for _, d := range withheldDecisions {
+			withheldTeamSkills = append(withheldTeamSkills, prime.WithheldSkill{Name: d.Name, Reason: d.Reason})
+		}
 	}
 	timing["skills_reconcile"] = time.Since(skillReconcileStart).Milliseconds()
 
