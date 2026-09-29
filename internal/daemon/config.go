@@ -42,6 +42,10 @@ func IsDaemonDisabled() bool {
 	if strings.ToLower(os.Getenv("SAGEOX_DAEMON")) == "false" {
 		return true
 	}
+	// host-managed mode with the network off never runs a daemon
+	if config.HostOffline() {
+		return true
+	}
 	if !runtime.Caps().DaemonViable {
 		// keep ephemeral.Reason() in the log line because operators are used
 		// to grepping for it; the underlying signal still flows through.

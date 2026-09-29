@@ -30,6 +30,9 @@ func NormalizeGitHubSync(mode string) string {
 // ResolveGitHubSync determines the effective master GitHub sync mode.
 // Priority: OX_GITHUB_SYNC env > project config > default ("enabled")
 func ResolveGitHubSync(projectRoot string) string {
+	if HostOffline() {
+		return GitHubSyncDisabled
+	}
 	if envMode := os.Getenv(EnvGitHubSync); envMode != "" {
 		return NormalizeGitHubSync(envMode)
 	}

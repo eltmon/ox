@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sageox/ox/internal/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -183,6 +184,10 @@ func AddSpanProcessor(p sdktrace.SpanProcessor) {
 // rather than 401'd by the server. Either is fine for tests and for users
 // who are logged out.
 func Init(ctx context.Context, serviceName, apiEndpoint string, tokenFunc TokenFunc, attrs ...attribute.KeyValue) error {
+	if config.HostOffline() {
+		slog.Debug("otel tracing disabled", "reason", "host-managed network off")
+		return nil
+	}
 	if apiEndpoint == "" {
 		slog.Debug("otel tracing disabled", "reason", "no endpoint")
 		return nil

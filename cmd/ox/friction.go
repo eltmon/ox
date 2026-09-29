@@ -98,6 +98,9 @@ func sendFrictionEventTo(event *friction.FrictionEvent, socketPath string) {
 	if strings.ToLower(os.Getenv("SAGEOX_FRICTION")) == "false" {
 		return
 	}
+	if config.HostOffline() {
+		return
+	}
 	if userCfg, err := config.LoadUserConfig(); err == nil && !userCfg.IsTelemetryEnabled() {
 		return
 	}
