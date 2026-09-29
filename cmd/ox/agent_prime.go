@@ -807,7 +807,12 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	fullPrimeDelivered := existingMarker != nil && markerIsThisSession && existingMarker.FullPrimeViaHook
 	compactReprime := fullPrimeDelivered && prime.ShouldCompactReprimeForEvent(primeCallCount, hookEventName, hookSource)
 
-	contentWithAttribution := withAttributionGuidance("", isLoggedIn, attribution)
+	contentWithAttribution := ""
+	planFooter := ""
+	if !hostManaged {
+		contentWithAttribution = withAttributionGuidance("", isLoggedIn, attribution)
+		planFooter = config.DefaultPlanFooterAttribution()
+	}
 
 	output := agentPrimeOutput{
 		Status:             "fresh",
@@ -822,7 +827,8 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 		TokenEstimate:      tokens.EstimateTokens(contentWithAttribution),
 		ContentLength:      len(contentWithAttribution),
 		Attribution:        attribution,
-		PlanFooter:         config.DefaultPlanFooterAttribution(),
+		PlanFooter:         planFooter,
+		HostManaged:        hostManaged,
 		ProjectGuidance:    projectGuidance,
 		TeamInstructions:   teamInstructions,
 		CapturePrior:       capturePrior,
@@ -1284,6 +1290,12 @@ func hasAliveRecordingForID(states []*session.RecordingState, agentID string) bo
 // the working directory: that is another repo when OX_PROJECT_ROOT selects one,
 // so a gate decided for projectRoot must read projectRoot's setting.
 func loadResolvedAttributionFor(projectRoot string) config.ResolvedAttribution {
+	// Host-managed mode adds no attribution anywhere: every value resolves
+	// empty, so commit/PR/session/plan credit paths all stay off.
+	if config.HostManaged() {
+		return config.ResolvedAttribution{}
+	}
+
 	// load project config (ignore errors, use defaults)
 	projectCfg, _ := config.LoadProjectConfig(projectRoot)
 
