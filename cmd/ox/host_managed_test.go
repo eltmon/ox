@@ -183,3 +183,35 @@ func TestHostManaged_UnsetLoggedOutPrimeAsksForLogin(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, out, "ox login")
 }
+
+// attributionMarkers are strings that only appear when prime tells the agent
+// to credit SageOx (guidance, plan footer, commit/PR trailers).
+var attributionMarkers = []string{"Co-Authored-By", "Guided by SageOx", "<attribution>", "SageOx Attribution", "Attribution is"}
+
+func TestHostManaged_PrimeCarriesNoAttribution(t *testing.T) {
+	initializedE2E(t)
+	t.Setenv(config.EnvHostManaged, "1")
+
+	for _, format := range []string{"xml", "json"} {
+		out, err := runPrimeCaptured(t, format)
+		require.NoError(t, err)
+		require.NotEmpty(t, out)
+		for _, marker := range attributionMarkers {
+			assert.NotContainsf(t, out, marker, "host-managed %s prime must carry no attribution", format)
+		}
+	}
+	assert.Equal(t, config.ResolvedAttribution{}, loadResolvedAttribution(), "every attribution value resolves empty")
+}
+
+// Control: upstream prime does tell the agent how to attribute.
+func TestHostManaged_UnsetPrimeCarriesAttribution(t *testing.T) {
+	initializedE2E(t)
+	t.Setenv(config.EnvHostManaged, "")
+
+	for _, format := range []string{"xml", "json"} {
+		out, err := runPrimeCaptured(t, format)
+		require.NoError(t, err)
+		assert.Containsf(t, out, "Co-Authored-By", "upstream %s prime carries commit attribution", format)
+		assert.Containsf(t, out, "Guided by SageOx", "upstream %s prime carries the plan footer", format)
+	}
+}

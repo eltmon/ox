@@ -695,7 +695,12 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 	// belt-and-suspenders rationale.
 	compactReprime := prime.ShouldCompactReprimeForEvent(primeCallCount, hookEventName, hookSource)
 
-	contentWithAttribution := withAttributionGuidance("", isLoggedIn, attribution)
+	contentWithAttribution := ""
+	planFooter := ""
+	if !hostManaged {
+		contentWithAttribution = withAttributionGuidance("", isLoggedIn, attribution)
+		planFooter = config.DefaultPlanFooterAttribution()
+	}
 
 	output := agentPrimeOutput{
 		Status:             "fresh",
@@ -709,7 +714,8 @@ func runAgentPrime(cmd *cobra.Command, args []string) error {
 		TokenEstimate:      tokens.EstimateTokens(contentWithAttribution),
 		ContentLength:      len(contentWithAttribution),
 		Attribution:        attribution,
-		PlanFooter:         config.DefaultPlanFooterAttribution(),
+		PlanFooter:         planFooter,
+		HostManaged:        hostManaged,
 		ProjectGuidance:    projectGuidance,
 		TeamInstructions:   teamInstructions,
 		CapturePrior:       capturePrior,
@@ -1133,6 +1139,12 @@ func hasAliveRecordingForID(states []*session.RecordingState, agentID string) bo
 // loadResolvedAttribution loads and merges attribution from user and project configs.
 // Project config takes precedence over user config, which takes precedence over defaults.
 func loadResolvedAttribution() config.ResolvedAttribution {
+	// Host-managed mode adds no attribution anywhere: every value resolves
+	// empty, so commit/PR/session/plan credit paths all stay off.
+	if config.HostManaged() {
+		return config.ResolvedAttribution{}
+	}
+
 	// load user config (ignore errors, use defaults)
 	userCfg, _ := config.LoadUserConfig()
 	var userAttr *config.Attribution

@@ -342,6 +342,7 @@ type Output struct {
 	Content           string                     `json:"content"`
 	Attribution       config.ResolvedAttribution `json:"attribution"`                 // commit/PR attribution for ox-guided work
 	PlanFooter        string                     `json:"plan_footer,omitempty"`       // exact text for plan footer ("Guided by SageOx")
+	HostManaged       bool                       `json:"host_managed,omitempty"`      // OX_HOST_MANAGED: no attribution guidance is rendered
 	ProjectGuidance   *ProjectGuidance           `json:"project_guidance,omitempty"`  // AGENTS.md content if found
 	TeamInstructions  *TeamInstructions          `json:"team_instructions,omitempty"` // team AGENTS.md/CLAUDE.md content if found
 	CapturePrior      *CapturePriorGuidance      `json:"capture_prior,omitempty"`     // instructions for capturing prior history
