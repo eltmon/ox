@@ -1409,8 +1409,9 @@ func (d *Daemon) startWorkers() {
 	// `ox doctor`. The set of checks lives in
 	// internal/doctor/autofix/default_checks.go and is intentionally
 	// small at first — incremental migration of cmd/ox/doctor_*.go
-	// auto-safe checks happens in follow-up beads.
-	if d.config.ProjectRoot != "" {
+	// auto-safe checks happens in follow-up beads. Host-managed mode
+	// (OX_HOST_MANAGED) never repairs repository files.
+	if d.config.ProjectRoot != "" && !config.HostManaged() {
 		autofixReg := autofix.Default()
 		d.autofixSched = autofix.NewScheduler(autofixReg, d.logger,
 			func() []string { return []string{d.config.ProjectRoot} },

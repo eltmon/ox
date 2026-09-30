@@ -36,9 +36,24 @@ func indexForPrime(_ context.Context, _ Request, snapshot Snapshot, artifacts []
 	return outcomes, nil
 }
 
+// hostManagedOutcomes settles every artifact as unsupported under
+// OX_HOST_MANAGED: the host owns the repository's files, so neither skills nor
+// rules are projected into it.
+func hostManagedOutcomes(snapshot Snapshot, artifacts []Artifact) []Outcome {
+	outcomes := make([]Outcome, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		outcomes = append(outcomes, outcomeFor(snapshot, artifact, StateUnsupported, "",
+			"host-managed: ox does not write into this repository"))
+	}
+	return outcomes
+}
+
 // convergeSkills is Team Skills' one production delivery mechanism: native
 // reconciliation through skillmanager.
 func convergeSkills(_ context.Context, request Request, snapshot Snapshot, artifacts []Artifact) ([]Outcome, error) {
+	if config.HostManaged() {
+		return hostManagedOutcomes(snapshot, artifacts), nil
+	}
 	if request.Mode == ModeAutomatic {
 		live, err := session.HasLiveRecording(request.ProjectRoot)
 		if err != nil {
@@ -137,6 +152,9 @@ func convergeSkills(_ context.Context, request Request, snapshot Snapshot, artif
 // convergeRules is Team Rules' delivery mechanism: native projection where an
 // agent can preserve the rule's scope, indexed/inline through prime otherwise.
 func convergeRules(ctx context.Context, request Request, snapshot Snapshot, artifacts []Artifact) ([]Outcome, error) {
+	if config.HostManaged() {
+		return hostManagedOutcomes(snapshot, artifacts), nil
+	}
 	hasNative := teamrules.HasNativeProjections(request.ProjectRoot)
 	if len(artifacts) == 0 && !hasNative {
 		return []Outcome{}, nil

@@ -108,6 +108,9 @@ func NewTelemetryCollector(logger *slog.Logger) *TelemetryCollector {
 
 // isTelemetryEnabled checks opt-out settings.
 func isTelemetryEnabled() bool {
+	if config.HostOffline() {
+		return false
+	}
 	// standard opt-out
 	if os.Getenv("DO_NOT_TRACK") == "1" {
 		return false

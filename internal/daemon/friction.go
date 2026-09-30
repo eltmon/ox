@@ -91,6 +91,9 @@ func (f *FrictionCollector) SetAuthTokenGetter(cb func() string) {
 
 // isFrictionEnabled checks if friction telemetry should be collected.
 func isFrictionEnabled() bool {
+	if config.HostOffline() {
+		return false
+	}
 	if os.Getenv("DO_NOT_TRACK") == "1" {
 		return false
 	}

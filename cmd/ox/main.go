@@ -15,6 +15,7 @@ import (
 	"github.com/mattn/go-isatty"
 	"github.com/sageox/agentx"
 	"github.com/sageox/ox/internal/cli"
+	"github.com/sageox/ox/internal/config"
 	"github.com/sageox/ox/internal/observability"
 	"github.com/sageox/ox/internal/telemetry"
 
@@ -102,6 +103,11 @@ func init() {
 }
 
 func main() {
+	// Host-managed mode with the network off (OX_HOST_MANAGED=1 without
+	// OX_HOST_NETWORK=on): refuse every request through http.DefaultTransport,
+	// before anything, including the detached telemetry sender below, can dial.
+	config.InstallHostNetworkGuard()
+
 	// A detached sender started by telemetry.CapturePostHog: post the event on
 	// stdin and exit before any command setup.
 	if len(os.Args) == 2 && os.Args[1] == telemetry.PostHogSenderArg {

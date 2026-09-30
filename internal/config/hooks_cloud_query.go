@@ -61,6 +61,9 @@ func (c *HooksConfig) SetUserPromptSubmitCloudQuery(enabled bool) {
 // Returns false if config cannot be loaded — fail-closed is the only safe
 // default for a privacy-sensitive switch.
 func ResolveUserPromptSubmitCloudQuery(projectRoot string) bool {
+	if HostOffline() {
+		return false
+	}
 	// Fail-closed on any config-load error. For a privacy switch this is
 	// the only safe behavior — proceeding with partial state (e.g.,
 	// missing user config but valid project config saying true) would

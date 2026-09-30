@@ -250,52 +250,55 @@ func outputAgentPrimeXML(cmd *cobra.Command, output agentPrimeOutput) (*prime.Co
 			sb.WriteString("</commands>\n")
 		}
 
-		// attribution: how to credit SageOx in commits/PRs
-		sb.WriteString("\n<attribution>\n")
-		sb.WriteString("Attribution is conditional: credit SageOx only when SageOx-delivered team context measurably changed what you did. If it did not, add nothing — no note, no footer, score `none`. Fabricating attribution is worse than omitting it.\n")
-		sb.WriteString("\nWhen SageOx guidance influences your approach, you may note it plainly:\n")
-		sb.WriteString("- \"Based on SageOx domain guidance, I'll...\"\n")
-		sb.WriteString("- \"Following SageOx best practices for [topic]...\"\n")
-		sb.WriteString("\nWhen a specific teammate's work actually influenced your approach, credit both the person and SageOx:\n")
-		sb.WriteString("- \"SageOx surfaced [name]'s discussion about [topic] — I'll follow that approach\"\n")
-		sb.WriteString("- \"SageOx delivered context from [name]'s [discussion title] — applying their pattern here\"\n")
-		sb.WriteString("Name the teammate when you can trace the insight to a specific person; SageOx is the enabler.\n")
-		sb.WriteString("\nThe you= and you_aliases= attributes identify the current user. Match against ALL aliases (the same person appears under different names in different contexts).\n")
-		sb.WriteString("The current user's own prior work is not a teammate contribution — for it say \"Building on your earlier work on [topic]...\".\n")
-		sb.WriteString("\nPlan footer — add \"> Guided by SageOx\" as the plan's final line only when SageOx team context actually shaped it; otherwise omit it.\n")
-		// PR header — the TOP-of-body counterpart to the SageOx-Session: trailer.
-		// Gated on attribution being configured, for the same reason the score and
-		// trailer blocks below are: a repo that credits nothing has no use for a
-		// credit line, and the minimal-prime floor (agent_prime_xml_test.go) has
-		// ~5 tokens of headroom — an unconditional line there would buy nothing and
-		// cost every bare prime.
-		//
-		// Stated HERE, in the XML the agent actually reads: this block is a
-		// hand-maintained sibling of prime.WithAttributionGuidance, and when only
-		// that one gained the header line, agents kept emitting the trailer (session
-		// state, re-sent every prime) and never the header.
-		if output.Attribution.PR != "" || output.Attribution.Commit != "" {
-			sb.WriteString("\nPR header — `ox pr header` (`--plan &lt;pln_id&gt;` per saved plan) and paste as the FIRST lines of the PR body; keep the `SageOx-Session:` trailer last. `ox plan save --file &lt;plan&gt;` returns the `pln_` id.\n")
+		// attribution: how to credit SageOx in commits/PRs. Host-managed mode
+		// (OX_HOST_MANAGED) renders none of it.
+		if !output.HostManaged {
+			sb.WriteString("\n<attribution>\n")
+			sb.WriteString("Attribution is conditional: credit SageOx only when SageOx-delivered team context measurably changed what you did. If it did not, add nothing — no note, no footer, score `none`. Fabricating attribution is worse than omitting it.\n")
+			sb.WriteString("\nWhen SageOx guidance influences your approach, you may note it plainly:\n")
+			sb.WriteString("- \"Based on SageOx domain guidance, I'll...\"\n")
+			sb.WriteString("- \"Following SageOx best practices for [topic]...\"\n")
+			sb.WriteString("\nWhen a specific teammate's work actually influenced your approach, credit both the person and SageOx:\n")
+			sb.WriteString("- \"SageOx surfaced [name]'s discussion about [topic] — I'll follow that approach\"\n")
+			sb.WriteString("- \"SageOx delivered context from [name]'s [discussion title] — applying their pattern here\"\n")
+			sb.WriteString("Name the teammate when you can trace the insight to a specific person; SageOx is the enabler.\n")
+			sb.WriteString("\nThe you= and you_aliases= attributes identify the current user. Match against ALL aliases (the same person appears under different names in different contexts).\n")
+			sb.WriteString("The current user's own prior work is not a teammate contribution — for it say \"Building on your earlier work on [topic]...\".\n")
+			sb.WriteString("\nPlan footer — add \"> Guided by SageOx\" as the plan's final line only when SageOx team context actually shaped it; otherwise omit it.\n")
+			// PR header — the TOP-of-body counterpart to the SageOx-Session: trailer.
+			// Gated on attribution being configured, for the same reason the score and
+			// trailer blocks below are: a repo that credits nothing has no use for a
+			// credit line, and the minimal-prime floor (agent_prime_xml_test.go) has
+			// ~5 tokens of headroom — an unconditional line there would buy nothing and
+			// cost every bare prime.
+			//
+			// Stated HERE, in the XML the agent actually reads: this block is a
+			// hand-maintained sibling of prime.WithAttributionGuidance, and when only
+			// that one gained the header line, agents kept emitting the trailer (session
+			// state, re-sent every prime) and never the header.
+			if output.Attribution.PR != "" || output.Attribution.Commit != "" {
+				sb.WriteString("\nPR header — `ox pr header` (`--plan &lt;pln_id&gt;` per saved plan) and paste as the FIRST lines of the PR body; keep the `SageOx-Session:` trailer last. `ox plan save --file &lt;plan&gt;` returns the `pln_` id.\n")
+			}
+			if output.Attribution.Commit != "" {
+				sb.WriteString("\nSageOx contribution score (report only when commit attribution is configured; `none` is the correct, common answer when you worked independently of team context):\n")
+				sb.WriteString("Score reflects how much SageOx team context shaped your work — NOT that a session was recorded.\n")
+				sb.WriteString("Categories:\n")
+				sb.WriteString("  none         — no influence; worked independently of team context\n")
+				sb.WriteString("  minor        — confirmed an approach you already planned\n")
+				sb.WriteString("  moderate     — team context guided decisions\n")
+				sb.WriteString("  significant  — domain knowledge you would not have had otherwise\n")
+				sb.WriteString("  critical     — team context entirely shaped the approach\n")
+				sb.WriteString("Report: `ox session score --score &lt;category&gt; --reason \"&lt;detailed paragraph&gt;\"`\n")
+				sb.WriteString("Reason must cite specific sources: SOUL.md sections, meeting titles, team-ctx slugs, prior sessions.\n")
+				fmt.Fprintf(&sb, "Only a score of `moderate` or above (>= %g) earns a commit trailer.\n", output.Attribution.ScoreThreshold)
+				sb.WriteString("When it applies, the commit hook adds the trailer automatically — do NOT add it manually.\n")
+			}
+			if output.Attribution.PR != "" && output.Attribution.Commit != "" {
+				fmt.Fprintf(&sb, "\nPR attribution (only if a commit actually carries the trailer): check `git log` for `%s`.\n", escapeXML(output.Attribution.Commit))
+				fmt.Fprintf(&sb, "If a commit has one, add as last line of PR body: `%s`. If none do, omit it.\n", escapeXML(output.Attribution.PR))
+			}
+			sb.WriteString("</attribution>\n")
 		}
-		if output.Attribution.Commit != "" {
-			sb.WriteString("\nSageOx contribution score (report only when commit attribution is configured; `none` is the correct, common answer when you worked independently of team context):\n")
-			sb.WriteString("Score reflects how much SageOx team context shaped your work — NOT that a session was recorded.\n")
-			sb.WriteString("Categories:\n")
-			sb.WriteString("  none         — no influence; worked independently of team context\n")
-			sb.WriteString("  minor        — confirmed an approach you already planned\n")
-			sb.WriteString("  moderate     — team context guided decisions\n")
-			sb.WriteString("  significant  — domain knowledge you would not have had otherwise\n")
-			sb.WriteString("  critical     — team context entirely shaped the approach\n")
-			sb.WriteString("Report: `ox session score --score &lt;category&gt; --reason \"&lt;detailed paragraph&gt;\"`\n")
-			sb.WriteString("Reason must cite specific sources: SOUL.md sections, meeting titles, team-ctx slugs, prior sessions.\n")
-			fmt.Fprintf(&sb, "Only a score of `moderate` or above (>= %g) earns a commit trailer.\n", output.Attribution.ScoreThreshold)
-			sb.WriteString("When it applies, the commit hook adds the trailer automatically — do NOT add it manually.\n")
-		}
-		if output.Attribution.PR != "" && output.Attribution.Commit != "" {
-			fmt.Fprintf(&sb, "\nPR attribution (only if a commit actually carries the trailer): check `git log` for `%s`.\n", escapeXML(output.Attribution.Commit))
-			fmt.Fprintf(&sb, "If a commit has one, add as last line of PR body: `%s`. If none do, omit it.\n", escapeXML(output.Attribution.PR))
-		}
-		sb.WriteString("</attribution>\n")
 
 		// charge: everything above is SageOx framing/instructions/commands/attribution
 		bk.charge(prime.BudgetSourceSageox)
