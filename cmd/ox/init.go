@@ -625,8 +625,14 @@ func runInit() error {
 	// Snapshot BEFORE the write: trackModifiedFile captures current
 	// content eagerly, so tracking afterwards would make rollback restore
 	// the polluted version rather than the original.
+	// Host-managed mode (OX_HOST_MANAGED) writes only .sageox/: no root
+	// .gitignore or .gitattributes edits, no AI coworker integration (prime
+	// markers, agent hook files, git hooks, skill inventories, ignore blocks).
+	// The host supplies hooks and env at launch.
+	hostManaged := config.HostManaged()
+
 	rootGitignore := filepath.Join(gitRoot, ".gitignore")
-	if sageoxGitignoreHasKBRule(gitRoot) {
+	if !hostManaged && sageoxGitignoreHasKBRule(gitRoot) {
 		tracker.trackModifiedFile(rootGitignore)
 		switch removed, err := sageoxignore.RemoveLine(rootGitignore, sageoxignore.LegacyRootKBLine); {
 		case err != nil:
@@ -638,16 +644,19 @@ func runInit() error {
 		}
 	}
 
-	// add SageOx entries to .gitattributes
-	gitattrsPath := filepath.Join(gitRoot, ".gitattributes")
-	gitattrsExisted := fileExists(gitattrsPath)
-	if gitattrsExisted {
-		tracker.trackModifiedFile(gitattrsPath)
-	}
-	if _, err := EnsureGitattributes(gitRoot); err != nil {
-		cli.PrintWarning(fmt.Sprintf("Could not update .gitattributes: %v", err))
-	} else if !gitattrsExisted && fileExists(gitattrsPath) {
-		tracker.trackCreatedFile(gitattrsPath)
+	if !hostManaged {
+		// add SageOx entries to .gitattributes
+		gitattrsPath := filepath.Join(gitRoot, ".gitattributes")
+		gitattrsExisted := fileExists(gitattrsPath)
+		if gitattrsExisted {
+			tracker.trackModifiedFile(gitattrsPath)
+		}
+		if _, err := EnsureGitattributes(gitRoot); err != nil {
+			cli.PrintWarning(fmt.Sprintf("Could not update .gitattributes: %v", err))
+		} else if !gitattrsExisted && fileExists(gitattrsPath) {
+			tracker.trackCreatedFile(gitattrsPath)
+		}
+
 	}
 
 	// single summary line for the entire repository setup section
@@ -659,154 +668,164 @@ func runInit() error {
 		}
 	}
 
-	// === AGENT INTEGRATION ===
-
-	// prompt for which agents to configure
-	selectedAgents, agentSelectErr := selectAgentsForInit(gitRoot)
-	if agentSelectErr != nil {
-		// user canceled — default to Claude Code only
-		if !initQuiet {
-			cli.PrintWarning("Agent selection canceled, defaulting to Claude Code")
-		}
-		selectedAgents = map[string]bool{"claude-code": true}
-	}
-
-	if !initQuiet {
-		fmt.Println()
-		fmt.Println(ui.RenderCategory("AI Coworker Integration"))
-	}
-
-	// inject ox agent prime into agent config (only if Claude Code selected)
+	var selectedAgents map[string]bool
 	var injectionResults []fileInjectionResult
-	if selectedAgents["claude-code"] {
-		// snapshot AGENTS.md / CLAUDE.md before injection (for rollback of modifications)
-		for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
-			p := filepath.Join(gitRoot, name)
-			if fileExists(p) {
-				tracker.trackModifiedFile(p)
-			}
+	var installedHooks []string
+	if hostManaged {
+		if !initQuiet {
+			cli.PrintPreserved("AI coworker integration left to the host (" + config.EnvHostManaged + ")")
 		}
-
-		var injErr error
-		injectionResults, injErr = injectOxPrime(gitRoot)
-		if injErr != nil {
-			cli.PrintWarning(fmt.Sprintf("Could not set up Claude Code: %v", injErr))
-		} else {
-			for _, r := range injectionResults {
-				p := filepath.Join(gitRoot, r.file)
-				if r.status == injectedNew || r.status == symlinkCreated {
-					tracker.trackCreatedFile(p)
-				}
-				// Stage everything this pass actually wrote. The later marker
-				// pass cannot cover these: it sees AGENTS.md / CLAUDE.md as
-				// alreadyPresent (this pass just put the marker there), so
-				// gating staging on the marker results alone left the two
-				// primary instruction files out of the init commit entirely —
-				// the GH #731 symptom, for the files it matters most for.
-				if r.status != alreadyPresent {
-					tracker.trackForceStage(p)
-				}
-			}
-		}
-	}
-
-	// snapshot pre-existing instruction files for rollback BEFORE markers mutate
-	// them — trackModifiedFile reads content eagerly, so snapshotting after
-	// EnsureInstructionFileMarkers would capture the already-modified content.
-	for _, t := range DetectedInstructionFiles(gitRoot) {
-		if t.Exists {
-			tracker.trackModifiedFile(filepath.Join(gitRoot, t.Path))
-		}
-	}
-
-	// inject ox:prime markers into all detected agent instruction files (multi-platform)
-	instrResults, instrErr := EnsureInstructionFileMarkers(gitRoot)
-	if instrErr != nil {
-		slog.Warn("failed to inject instruction file markers", "error", instrErr)
 	} else {
-		for _, r := range instrResults {
-			slog.Debug("instruction file marker", "file", r.File, "status", r.Status, "agent", r.AgentType)
-			// only newly-created files need create-tracking; pre-existing files
-			// were already snapshotted for rollback above
-			if r.Status == injectedNew {
-				tracker.trackCreatedFile(filepath.Join(gitRoot, r.File))
+		// === AGENT INTEGRATION ===
+
+		// prompt for which agents to configure
+		var agentSelectErr error
+		selectedAgents, agentSelectErr = selectAgentsForInit(gitRoot)
+		if agentSelectErr != nil {
+			// user canceled — default to Claude Code only
+			if !initQuiet {
+				cli.PrintWarning("Agent selection canceled, defaulting to Claude Code")
 			}
-			// Stage ONLY the instruction files ox actually wrote to. Staging
-			// every *detected* file would sweep in a user's own uncommitted
-			// edits to e.g. GEMINI.md that ox never touched — the same
-			// over-staging hazard as accepting a repo-root pathspec.
-			if r.Status == injectedNew || r.Status == injectedUpgrade {
-				tracker.trackForceStage(filepath.Join(gitRoot, r.File))
+			selectedAgents = map[string]bool{"claude-code": true}
+		}
+
+		if !initQuiet {
+			fmt.Println()
+			fmt.Println(ui.RenderCategory("AI Coworker Integration"))
+		}
+
+		// inject ox agent prime into agent config (only if Claude Code selected)
+		if selectedAgents["claude-code"] {
+			// snapshot AGENTS.md / CLAUDE.md before injection (for rollback of modifications)
+			for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+				p := filepath.Join(gitRoot, name)
+				if fileExists(p) {
+					tracker.trackModifiedFile(p)
+				}
 			}
-		}
-	}
 
-	// detect and install agent hooks
-	// installAgentHooks returns absolute, existence-verified paths inside
-	// gitRoot — do NOT re-join against gitRoot here. Doing so was half of
-	// GH #731: adapters that already returned absolute paths became
-	// <root><root>/.codex/hooks.json, and one such entry failed the whole
-	// `git add`, leaving even .claude/settings.json unstaged.
-	installedHooks := installAgentHooks(gitRoot, true, selectedAgents) // quiet — summarized below
-
-	// Snapshot every scoped ignore file that ALREADY EXISTS, before writing any of
-	// them. trackModifiedFile snapshots eagerly, at call time — so calling it after
-	// the write would capture the already-modified bytes and rollback would
-	// "restore" the ox block into the user's file instead of removing it.
-	for _, f := range scopedIgnoreFiles() {
-		abs := filepath.Join(gitRoot, f.Dir, ".gitignore")
-		if _, err := os.Lstat(abs); err == nil {
-			tracker.trackModifiedFile(abs)
-		}
-	}
-
-	// Write the ox-managed ignore block BEFORE anything is staged, so the rule
-	// that hides ox's own files exists in the tree before the index is touched.
-	// Warn on UNPROTECTED as well as on error. A directory ox cannot own — a
-	// symlinked or non-regular .gitignore — is reported as unprotected and returns
-	// no error at all, so an error-only check goes silent in exactly the case the
-	// user most needs to hear about: ox's files are about to exist in that
-	// directory with nothing hiding them from git.
-	ignoreFiles, unprotected, ignoreErr := skillmanager.EnsureScopedIgnoreFilesForDirs(gitRoot, nil)
-	if !initQuiet {
-		if ignoreErr != nil {
-			cli.PrintWarning(fmt.Sprintf("Could not write ox ignore rules: %v", ignoreErr))
-		}
-		if len(unprotected) > 0 {
-			cli.PrintWarning(fmt.Sprintf(
-				"Could not write ox ignore rules in %s — ox files there will be visible to git; "+
-					"remove or rename the blocking path and rerun `ox doctor --fix`",
-				strings.Join(unprotected, ", ")))
-		}
-	}
-	trackScopedIgnoreFilesForInit(tracker, gitRoot, ignoreFiles, ignoreErr)
-
-	// Every installed path is tracked for ROLLBACK, but only the non-reserved ones
-	// are staged — see stageableInstalledPaths for why.
-	for _, hookFile := range installedHooks {
-		tracker.trackCreatedFile(hookFile)
-	}
-	for _, hookFile := range stageableInstalledPaths(gitRoot, installedHooks) {
-		tracker.trackForceStage(hookFile)
-	}
-
-	// Commands remain an adapter compatibility surface. Skills and ox-owned
-	// rules are projected together by the central inventory reconciler.
-
-	// single summary line for the entire integration section
-	if !initQuiet {
-		hasNew := len(injectionResults) > 0
-		for _, r := range injectionResults {
-			if r.status == injectedNew || r.status == injectedUpgrade {
-				hasNew = true
-				break
+			var injErr error
+			injectionResults, injErr = injectOxPrime(gitRoot)
+			if injErr != nil {
+				cli.PrintWarning(fmt.Sprintf("Could not set up Claude Code: %v", injErr))
+			} else {
+				for _, r := range injectionResults {
+					p := filepath.Join(gitRoot, r.file)
+					if r.status == injectedNew || r.status == symlinkCreated {
+						tracker.trackCreatedFile(p)
+					}
+					// Stage everything this pass actually wrote. The later marker
+					// pass cannot cover these: it sees AGENTS.md / CLAUDE.md as
+					// alreadyPresent (this pass just put the marker there), so
+					// gating staging on the marker results alone left the two
+					// primary instruction files out of the init commit entirely —
+					// the GH #731 symptom, for the files it matters most for.
+					if r.status != alreadyPresent {
+						tracker.trackForceStage(p)
+					}
+				}
 			}
 		}
-		if hasNew || len(installedHooks) > 0 {
-			cli.PrintSuccess("Installed AI coworker integrations and skills")
+
+		// snapshot pre-existing instruction files for rollback BEFORE markers mutate
+		// them — trackModifiedFile reads content eagerly, so snapshotting after
+		// EnsureInstructionFileMarkers would capture the already-modified content.
+		for _, t := range DetectedInstructionFiles(gitRoot) {
+			if t.Exists {
+				tracker.trackModifiedFile(filepath.Join(gitRoot, t.Path))
+			}
+		}
+
+		// inject ox:prime markers into all detected agent instruction files (multi-platform)
+		instrResults, instrErr := EnsureInstructionFileMarkers(gitRoot)
+		if instrErr != nil {
+			slog.Warn("failed to inject instruction file markers", "error", instrErr)
 		} else {
-			cli.PrintPreserved("AI coworker integrations and skills")
+			for _, r := range instrResults {
+				slog.Debug("instruction file marker", "file", r.File, "status", r.Status, "agent", r.AgentType)
+				// only newly-created files need create-tracking; pre-existing files
+				// were already snapshotted for rollback above
+				if r.Status == injectedNew {
+					tracker.trackCreatedFile(filepath.Join(gitRoot, r.File))
+				}
+				// Stage ONLY the instruction files ox actually wrote to. Staging
+				// every *detected* file would sweep in a user's own uncommitted
+				// edits to e.g. GEMINI.md that ox never touched — the same
+				// over-staging hazard as accepting a repo-root pathspec.
+				if r.Status == injectedNew || r.Status == injectedUpgrade {
+					tracker.trackForceStage(filepath.Join(gitRoot, r.File))
+				}
+			}
 		}
+
+		// detect and install agent hooks
+		// installAgentHooks returns absolute, existence-verified paths inside
+		// gitRoot — do NOT re-join against gitRoot here. Doing so was half of
+		// GH #731: adapters that already returned absolute paths became
+		// <root><root>/.codex/hooks.json, and one such entry failed the whole
+		// `git add`, leaving even .claude/settings.json unstaged.
+		installedHooks = installAgentHooks(gitRoot, true, selectedAgents) // quiet — summarized below
+
+		// Snapshot every scoped ignore file that ALREADY EXISTS, before writing any of
+		// them. trackModifiedFile snapshots eagerly, at call time — so calling it after
+		// the write would capture the already-modified bytes and rollback would
+		// "restore" the ox block into the user's file instead of removing it.
+		for _, f := range scopedIgnoreFiles() {
+			abs := filepath.Join(gitRoot, f.Dir, ".gitignore")
+			if _, err := os.Lstat(abs); err == nil {
+				tracker.trackModifiedFile(abs)
+			}
+		}
+
+		// Write the ox-managed ignore block BEFORE anything is staged, so the rule
+		// that hides ox's own files exists in the tree before the index is touched.
+		// Warn on UNPROTECTED as well as on error. A directory ox cannot own — a
+		// symlinked or non-regular .gitignore — is reported as unprotected and returns
+		// no error at all, so an error-only check goes silent in exactly the case the
+		// user most needs to hear about: ox's files are about to exist in that
+		// directory with nothing hiding them from git.
+		ignoreFiles, unprotected, ignoreErr := skillmanager.EnsureScopedIgnoreFilesForDirs(gitRoot, nil)
+		if !initQuiet {
+			if ignoreErr != nil {
+				cli.PrintWarning(fmt.Sprintf("Could not write ox ignore rules: %v", ignoreErr))
+			}
+			if len(unprotected) > 0 {
+				cli.PrintWarning(fmt.Sprintf(
+					"Could not write ox ignore rules in %s — ox files there will be visible to git; "+
+						"remove or rename the blocking path and rerun `ox doctor --fix`",
+					strings.Join(unprotected, ", ")))
+			}
+		}
+		trackScopedIgnoreFilesForInit(tracker, gitRoot, ignoreFiles, ignoreErr)
+
+		// Every installed path is tracked for ROLLBACK, but only the non-reserved ones
+		// are staged — see stageableInstalledPaths for why.
+		for _, hookFile := range installedHooks {
+			tracker.trackCreatedFile(hookFile)
+		}
+		for _, hookFile := range stageableInstalledPaths(gitRoot, installedHooks) {
+			tracker.trackForceStage(hookFile)
+		}
+
+		// Commands remain an adapter compatibility surface. Skills and ox-owned
+		// rules are projected together by the central inventory reconciler.
+
+		// single summary line for the entire integration section
+		if !initQuiet {
+			hasNew := len(injectionResults) > 0
+			for _, r := range injectionResults {
+				if r.status == injectedNew || r.status == injectedUpgrade {
+					hasNew = true
+					break
+				}
+			}
+			if hasNew || len(installedHooks) > 0 {
+				cli.PrintSuccess("Installed AI coworker integrations and skills")
+			} else {
+				cli.PrintPreserved("AI coworker integrations and skills")
+			}
+		}
+
 	}
 
 	// === GIT & REGISTRATION ===

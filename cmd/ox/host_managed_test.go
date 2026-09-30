@@ -215,3 +215,69 @@ func TestHostManaged_UnsetPrimeCarriesAttribution(t *testing.T) {
 		assert.Containsf(t, out, "Guided by SageOx", "upstream %s prime carries the plan footer", format)
 	}
 }
+
+// changedPaths lists every path git reports as changed or untracked.
+func changedPaths(t *testing.T, repo string) []string {
+	t.Helper()
+	var paths []string
+	for _, line := range strings.Split(hostPorcelain(t, repo), "\n") {
+		if len(line) > 3 {
+			paths = append(paths, strings.TrimSpace(line[3:]))
+		}
+	}
+	return paths
+}
+
+func gitHookNames(t *testing.T, repo string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(repo, ".git", "hooks"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	require.NoError(t, err)
+	var names []string
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".sample") {
+			names = append(names, e.Name())
+		}
+	}
+	return names
+}
+
+func runInitWithClaude(t *testing.T, env *oxE2E) {
+	t.Helper()
+	withInitFlags(t, env.TeamID)
+	initAgentsFlag = "claude-code"
+	require.NoError(t, runInit())
+}
+
+func TestHostManaged_InitWritesOnlySageox(t *testing.T) {
+	env := newOxE2E(t)
+	t.Setenv(config.EnvHostManaged, "1")
+	t.Setenv(config.EnvHostNetwork, "on") // init registers the repo with the API
+	hooksBefore := gitHookNames(t, env.Root)
+
+	runInitWithClaude(t, env)
+
+	require.True(t, config.IsInitialized(env.Root), "host-managed init still initializes .sageox/")
+	for _, path := range changedPaths(t, env.Root) {
+		assert.Truef(t, strings.HasPrefix(path, ".sageox/"), "host-managed init wrote %s outside .sageox/", path)
+	}
+	assert.Equal(t, hooksBefore, gitHookNames(t, env.Root), "host-managed init installs no git hooks")
+}
+
+// Control: upstream init with Claude Code selected writes outside .sageox/.
+func TestHostManaged_UnsetInitWritesAgentIntegration(t *testing.T) {
+	env := newOxE2E(t)
+	t.Setenv(config.EnvHostManaged, "")
+
+	runInitWithClaude(t, env)
+
+	var outside []string
+	for _, path := range changedPaths(t, env.Root) {
+		if !strings.HasPrefix(path, ".sageox/") {
+			outside = append(outside, path)
+		}
+	}
+	assert.NotEmpty(t, outside, "upstream init writes AI coworker integration files")
+}
