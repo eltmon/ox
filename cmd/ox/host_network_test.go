@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -91,4 +93,35 @@ func TestHostOffline_PrimeAndHooksSendNothingAndRecordLocally(t *testing.T) {
 	sessions, err := filepath.Glob(filepath.Join(ledgerPath, ".sageox", "cache", "sessions", "*", "raw.jsonl"))
 	require.NoError(t, err)
 	assert.NotEmpty(t, sessions, "CP-1: offline host-managed mode records the session locally")
+}
+
+// The plan push retry that every prime kicks is a Ledger git push, which the
+// HTTP guard cannot refuse, so offline host-managed prime must not start it.
+// Control: with the network on, the same pending entry does attempt a retry
+// (under go test it logs "plan push retry not started": no ox binary).
+func TestHostOffline_PrimeStartsNoPlanPushRetry(t *testing.T) {
+	prev := planLedgerPathFor
+	t.Cleanup(func() { planLedgerPathFor = prev })
+	ledgerDir := t.TempDir()
+	e := reviewPending{PlanDir: "data/plans/p", Plan: "p", Kind: "round", ID: "round-0001", Path: "feedback/r.json", Data: []byte("{}")}
+	e.SHA256 = sha256Hex(e.Data)
+	require.NoError(t, writeReviewPending(e.path(ledgerDir), e))
+	planLedgerPathFor = func(string) (string, error) { return ledgerDir, nil }
+
+	var logs bytes.Buffer
+	prevLog := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLog) })
+
+	t.Setenv(config.EnvHostManaged, "1")
+	t.Setenv(config.EnvHostNetwork, "off")
+	kickPendingPlanPushes(t.TempDir())
+	assert.NotContains(t, logs.String(), "plan push retry", "offline host-managed prime must not start a Ledger push")
+	left, err := listReviewPending(ledgerDir)
+	require.NoError(t, err)
+	assert.Len(t, left, 1, "the pending entry survives for a later online prime")
+
+	t.Setenv(config.EnvHostNetwork, "on")
+	kickPendingPlanPushes(t.TempDir())
+	assert.Contains(t, logs.String(), "plan push retry", "control: with the network on the retry is attempted")
 }

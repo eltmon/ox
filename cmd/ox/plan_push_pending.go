@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sageox/ox/internal/config"
 	"github.com/sageox/ox/internal/fileutil"
 	"github.com/sageox/ox/internal/gitutil"
 	"github.com/sageox/ox/internal/ledger"
@@ -417,6 +418,12 @@ func flushPendingPlanPushes(ctx context.Context, ledgerPath string) (succeeded, 
 // its stdout contract (the coworker's context) are untouched; the check here is
 // one ReadDir, so prime pays nothing when nothing is pending.
 func kickPendingPlanPushes(projectRoot string) {
+	// Host-managed mode with the network off: the retry is a Ledger git push,
+	// which the HTTP guard cannot see. Leave the markers for a later prime
+	// that runs with the network on.
+	if config.HostOffline() {
+		return
+	}
 	ledgerPath, err := planLedgerPathFor(projectRoot)
 	if err != nil {
 		return
